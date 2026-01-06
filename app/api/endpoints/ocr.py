@@ -12,77 +12,117 @@ logger = logging.getLogger(__name__)
 @router.post("/processar-sus")
 async def processar_documento_sus(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
-    Motor OCR Inteligente:
-    1. Lê CPF e Nome.
-    2. Detecta Nível de Prioridade (Onco/Urgent/Eletivo).
-    3. Atualiza cadastro se necessário.
-    4. Gera o pré-cadastro da solicitação com a prioridade definida.
+    Motor OCR Híbrido:
+    - Reconhece se é 'Laudo Médico' (Gera Demanda + Prioridade) 
+    - Reconhece se é 'Comprovante de Agendamento' (Gera Logística + Data)
     """
     
-    # 1. Leitura e Processamento via Serviço
+    # 1. Leitura e Classificação do Documento
     contents = await file.read()
-    # O Service agora retorna 'cpf', 'nome' e 'prioridade'
+    # Retorna dicionário com 'tipo_doc', 'cid', 'prioridade', 'data_exame', etc.
     dados = OCRService.extrair_dados_sus(contents, file.filename)
     
     if not dados["cpf"]:
-        raise HTTPException(status_code=400, detail="CPF não localizado no documento.")
+        raise HTTPException(status_code=400, detail="CPF não localizado. Verifique a qualidade da imagem.")
 
-    # 2. Gestão Inteligente do Paciente (Busca ou Cria)
+    # 2. Gestão Inteligente do Paciente
     paciente = db.query(Paciente).filter(Paciente.cpf == dados["cpf"]).first()
     
     if not paciente:
-        # Criação com UUID automático
-        logger.info(f"Criando novo paciente via OCR: {dados['cpf']}")
+        logger.info(f"Cadastro automático via OCR: {dados['cpf']}")
         paciente = Paciente(
             cpf=dados["cpf"], 
-            nome=dados["nome"]
+            nome=dados["nome"],
+            telefone=dados.get("telefone") # Captura telefone do laudo ou comprovante
         )
         db.add(paciente)
         db.commit()
         db.refresh(paciente)
     else:
-        # Lógica de Atualização Cadastral (Sua versão 'Mais Completa')
-        # Se o nome gravado for genérico e o OCR achou um nome melhor agora, atualiza.
+        # Atualização Cadastral Incrementals
+        mudou = False
         if dados["nome"] != "Validar no Dashboard" and "Validar" in paciente.nome:
-            logger.info(f"Atualizando nome do paciente {paciente.cpf} via OCR.")
             paciente.nome = dados["nome"]
+            mudou = True
+        
+        # Se o paciente não tinha telefone e o documento trouxe um, atualiza
+        if dados.get("telefone") and not paciente.telefone:
+            paciente.telefone = dados["telefone"]
+            mudou = True
+            
+        if mudou:
             db.commit()
             db.refresh(paciente)
 
-    # 3. Criação da Pré-Candidatura (Lógica BlaBlaCar)
-    # Registramos a intenção e a PRIORIDADE detectada, mas o status fica 'Aguardando_Analise'
-    # até o paciente ou gestor vincular a um ônibus específico.
+    # 3. Definição da Data da Viagem
+    # - Se for COMPROVANTE: Usamos a data exata do exame.
+    # - Se for LAUDO: Usamos a data de hoje como 'Data de Solicitação' (pois a viagem ainda não existe).
+    data_referencia = datetime.now()
+    
+    if dados.get("data_exame"):
+        try:
+            data_str = dados["data_exame"]
+            if dados.get("hora_exame"):
+                data_str += f" {dados['hora_exame']}"
+                data_referencia = datetime.strptime(data_str, "%d/%m/%Y %H:%M")
+            else:
+                data_referencia = datetime.strptime(data_str, "%d/%m/%Y")
+        except ValueError:
+            logger.warning(f"Data ilegível no OCR: {dados['data_exame']}")
+            # Mantém data atual se falhar
+
+    # 4. Enriquecimento da Descrição do Procedimento
+    # Se for Laudo com CID, adicionamos essa info visualmente
+    descricao_procedimento = dados["procedimento"] or "Identificado via OCR"
+    if dados.get("cid"):
+        descricao_procedimento += f" (CID Detectado: {dados['cid']})"
+
+    # 5. Criação da Solicitação
     nova_solicitacao = SolicitacaoTFD(
         paciente_id=paciente.id,
-        procedimento="Identificado via OCR (Aguardando vínculo com ônibus)",
+        procedimento=descricao_procedimento,
         
-        # AQUI ESTÁ O PULO DO GATO: Salvamos a prioridade médica extraída do PDF
+        # AQUI O OCR BRILHA: Define se é Prioridade 5 (Onco) ou 1 (Rotina)
         nivel_prioridade=dados.get("prioridade", 1),
         
-        status_pedido="Aguardando_Analise", # Paciente ainda vai escolher a viagem
-        tipo_transporte="Pendente",
-        data_desejada=datetime.now() # Data base, será alterada quando escolher o ônibus
+        # Data extraída do comprovante OU data de hoje (para laudos)
+        data_desejada=data_referencia,
+        
+        # Status inicial
+        status_pedido="Aguardando_Analise", 
+        tipo_transporte="Pendente"
     )
     
     db.add(nova_solicitacao)
     db.commit()
     db.refresh(nova_solicitacao)
 
-    # 4. Retorno Rico para o Frontend
+    # 6. Retorno Contextualizado
+    mensagem_retorno = "Documento processado."
+    if dados["tipo_doc"] == "LAUDO_SOLICITACAO":
+        mensagem_retorno = f"Laudo Médico identificado. Prioridade Nível {dados['prioridade']} atribuída devido ao diagnóstico."
+    elif dados["tipo_doc"] == "COMPROVANTE_AGENDAMENTO":
+        mensagem_retorno = f"Agendamento confirmado para {dados.get('destino_detectado', 'destino externo')}. Data da viagem pré-preenchida."
+
     return {
         "status": "sucesso",
+        "tipo_documento_detectado": dados["tipo_doc"], # Útil para o frontend mostrar ícone diferente
         "paciente": {
             "uuid": str(paciente.id),
             "nome": paciente.nome,
-            "cpf": paciente.cpf
+            "cpf": paciente.cpf,
+            "telefone": paciente.telefone
         },
         "analise_ia": {
-            "prioridade_detectada": dados.get("prioridade", 1), # 1 a 5
-            "motivo": "Termos médicos identificados no documento"
+            "prioridade": dados.get("prioridade", 1),
+            "cid_suspeito": dados.get("cid"),
+            "destino_sugerido": dados.get("destino_detectado"),
+            "data_leitura": dados.get("data_exame")
         },
         "solicitacao": {
             "id": str(nova_solicitacao.id),
-            "status": nova_solicitacao.status_pedido
+            "procedimento": nova_solicitacao.procedimento,
+            "data_considerada": nova_solicitacao.data_desejada
         },
-        "mensagem": "Documento processado. Vá para o 'Mural de Viagens' para escolher seu ônibus."
+        "mensagem": mensagem_retorno
     }
