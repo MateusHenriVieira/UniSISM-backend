@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.vscode/
+.idea/
+*.log
+# Ignorar volumes do Docker para não enviar o banco de dados
+postgres_data/
