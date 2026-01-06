@@ -6,39 +6,43 @@ from app.db.session import engine
 from app.db import base
 
 # Importação das Rotas dos Módulos
-from app.api.endpoints import ocr, pacientes, tfd, frota
+# ATUALIZADO: Adicionado 'medico' à lista de imports
+from app.api.endpoints import ocr, pacientes, tfd, frota, medico
 
 # 1. Criação das tabelas no PostgreSQL automaticamente ao iniciar
-# Isso garante que 'pacientes', 'agendamentos' e 'viagens_tfd' existam
+# Isso garante que todas as tabelas (incluindo as novas UnidadeSaude e Usuario) sejam criadas
 base.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="UniSISM - Sistema Integrado de Saúde Municipal",
-    description="Plataforma de governança em saúde e logística de alta performance",
-    version="1.0.0"
+    description="Plataforma de governança em saúde, regulação TFD e gestão de frota.",
+    version="1.1.0" # Versão incrementada devido ao novo módulo médico
 )
 
 # 2. Configuração de CORS (Cross-Origin Resource Sharing)
-# Essencial para permitir que o Frontend (Next.js/Tauri) acesse a API na VPS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Em produção, substitua pelo IP da sua VPS ou domínio
+    allow_origins=["*"],  # Em produção, restrinja ao domínio do front (ex: Vercel)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 3. Registro das Rotas (Endpoints)
-# Módulo Médico & Secretaria: Processamento de PDFs via OCR
-app.include_router(ocr.router, prefix="/api/v1/ocr", tags=["OCR & Secretaria"])
 
-# Módulo de Gestão de Pacientes
+# Módulo de Entrada Inteligente (OCR Híbrido: Laudos e Comprovantes)
+app.include_router(ocr.router, prefix="/api/v1/ocr", tags=["OCR & Entrada Inteligente"])
+
+# Módulo do Portal do Médico (NOVO: Dashboard e Seleção de UBS)
+app.include_router(medico.router, prefix="/api/v1/medico", tags=["Portal do Médico"])
+
+# Módulo de Logística TFD (BlaBlaCar da Saúde & Financeiro)
+app.include_router(tfd.router, prefix="/api/v1/tfd", tags=["Logística TFD & Regulação"])
+
+# Módulo de Gestão de Pacientes (CRUD Básico)
 app.include_router(pacientes.router, prefix="/api/v1/pacientes", tags=["Pacientes"])
 
-# Módulo de Gestão de TFD: Controle orçamentário e ajudas de custo
-app.include_router(tfd.router, prefix="/api/v1/tfd", tags=["TFD & Financeiro"])
-
-# Módulo de Frota: Vouchers de abastecimento e motoristas
+# Módulo de Frota (Vouchers e Motoristas)
 app.include_router(frota.router, prefix="/api/v1/frota", tags=["Logística & Frota"])
 
 # 4. Endpoints de Verificação do Sistema
@@ -48,11 +52,13 @@ async def root():
     return {
         "sistema": "UniSISM",
         "status": "Online",
-        "versao": "1.0.0",
+        "versao": "1.1.0",
+        "arquitetura": "Descentralizada (UBS -> Central)",
         "modulos_ativos": [
-            "OCR Engine (Python/Tesseract)",
-            "Gestão TFD (Controle Orçamentário)",
-            "Logística de Frota (App Motorista)",
+            "OCR Engine v2 (Detecção de Laudo/CID)",
+            "Portal do Médico (Gestão por Unidade)",
+            "Gestão TFD (Fila de Prioridade Inteligente)",
+            "Logística de Frota (Cronograma de Viagens)",
             "Mensageria (WhatsApp/Push)"
         ]
     }
