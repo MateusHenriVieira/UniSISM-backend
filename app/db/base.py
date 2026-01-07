@@ -27,17 +27,18 @@ class UnidadeSaude(Base):
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
 
 class Usuario(Base):
-    """
-    Pode ser Médico, Enfermeiro ou Admin.
-    """
     __tablename__ = "usuarios"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
     nome = Column(String, nullable=False)
     cpf = Column(String, unique=True, index=True, nullable=False)
-    crm = Column(String, nullable=True) # Só para médicos
-    senha_hash = Column(String, nullable=False) # Para futuro login
     
-    # Perfil: 'MEDICO', 'RECEPCAO_UBS', 'GESTOR_TFD'
+    # NOVOS CAMPOS PARA O PRIMEIRO ACESSO
+    login = Column(String, unique=True, index=True, nullable=False) # No início é igual ao CPF
+    primeiro_acesso = Column(Boolean, default=True) # Começa True, vira False depois
+    
+    crm = Column(String, nullable=True) 
+    senha_hash = Column(String, nullable=False) 
     perfil = Column(String, default="MEDICO")
     
     unidades = relationship("UnidadeSaude", secondary=medico_unidade, back_populates="medicos")
