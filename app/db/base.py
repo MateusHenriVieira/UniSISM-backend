@@ -70,10 +70,9 @@ class CronogramaViagem(Base):
 class SolicitacaoTFD(Base):
     __tablename__ = "solicitacoes_tfd"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    paciente_id = Column(UUID(as_uuid=True), ForeignKey("pacientes.id"))
-    viagem_id = Column(UUID(as_uuid=True), ForeignKey("cronograma_viagens.id"), nullable=True)
+    # ... outros campos existentes (paciente_id, viagem_id, etc...)
     
-    # RASTREABILIDADE TOTAL (Quem solicitou e de onde)
+    # RASTREABILIDADE
     medico_solicitante_id = Column(UUID(as_uuid=True), ForeignKey("usuarios.id"), nullable=True)
     unidade_solicitante_id = Column(UUID(as_uuid=True), ForeignKey("unidades_saude.id"), nullable=True)
     
@@ -82,8 +81,13 @@ class SolicitacaoTFD(Base):
     com_acompanhante = Column(Boolean, default=False)
     nivel_prioridade = Column(Integer, default=1) 
     status_pedido = Column(String, default="Aguardando_Analise")
+    
+    # --- NOVO CAMPO ---
+    # Status Operacional: 'PENDENTE', 'EMBARCOU', 'AUSENTE'
+    status_embarque = Column(String, default="PENDENTE") 
+    # ------------------
+
     tipo_transporte = Column(String, default="Pendente") 
     valor_ajuda_custo = Column(Float, default=0.0)
-    
     status_aprovacao = Column(Boolean, default=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

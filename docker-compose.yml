@@ -4,28 +4,52 @@ services:
   db:
     image: postgres:15
     container_name: unisism_db
-    restart: always
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: unisism_pass
-      POSTGRES_DB: unisism
+      POSTGRES_USER: unisism_user
+      POSTGRES_PASSWORD: unisism_password
+      POSTGRES_DB: unisism_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
 
+  redis: # <--- NOVO: Broker de Mensagens
+    image: redis:7
+    container_name: unisism_redis
+    ports:
+      - "6379:6379"
+
   backend:
     build: .
     container_name: unisism_api
-    restart: always
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    depends_on:
-      - db
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
+      - ./uploads:/app/uploads # <--- NOVO: Pasta compartilhada para arquivos
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://unisism_user:unisism_password@db/unisism_db
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+  worker: # <--- NOVO: Processa o OCR em background
+    build: .
+    container_name: unisism_worker
+    command: celery -A app.core.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+      - ./uploads:/app/uploads # <--- Vê os mesmos arquivos que a API
+    environment:
+      DATABASE_URL: postgresql://unisism_user:unisism_password@db/unisism_db
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - backend
+      - redis
 
 volumes:
   postgres_data:
